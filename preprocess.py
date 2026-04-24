@@ -30,3 +30,13 @@ def load_data(local, bucket=None, file_name=None):
         obj = s3.get_object(Bucket=bucket, Key=file_name)
         df = pd.read_csv(obj['Body'])
     return df
+
+# Function to save the preprocessed data, call at the end of preprocessing
+def save_preprocessed_data(df, local, bucket=None, file_name=None):
+    if local:
+        print("Saving preprocessed data to local")
+        df.to_csv(file_name, index=False)
+    else:
+        print("Saving preprocessed data to S3 bucket")
+        s3 = boto3.client('s3')
+        s3.put_object(Bucket=bucket, Key=file_name, Body=df.to_csv(index=False))
