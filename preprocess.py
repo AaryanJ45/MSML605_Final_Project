@@ -6,6 +6,9 @@ import joblib
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
+# Boto3 for AWS S3 interaction
+import boto3
+
 # Creating a function for text cleaning
 def clean_text(text):
     text = re.sub(r"http\S+", "", text)  # Remove URLs
@@ -15,4 +18,15 @@ def clean_text(text):
     return text
 
 # Function to Load data
-
+def load_data(local, bucket=None, file_name=None):
+    # If we are running from local computer, load the data from local file system
+    if local:
+        print("Loading from local")
+        df = pd.read_csv(file_name)
+    # If we are running from cloud, load the data from S3 bucket
+    else:
+        print("Loading from S3 bucket")
+        s3 = boto3.client('s3')
+        obj = s3.get_object(Bucket=bucket, Key=file_name)
+        df = pd.read_csv(obj['Body'])
+    return df
