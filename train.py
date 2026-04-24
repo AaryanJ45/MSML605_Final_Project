@@ -2,11 +2,9 @@ import argparse
 import os
 import pandas as pd
 import numpy as np
+import joblib
 from datetime import datetime
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, classification_report
-from sklearn.preprocessing import LabelEncoder
-from sklearn.feature_extraction.text import TfidfVectorizer
 import torch
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
@@ -16,6 +14,7 @@ from clearml import Task
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", type=str, choices=["bert", "distilbert"], required=True)
+parser.add_argument("--local", action="store_true")
 args = parser.parse_args()
 
 if args.model == "bert":
@@ -29,47 +28,18 @@ MAX_LEN = 256
 BATCH = 16
 EPOCHS = 3
 LR = 2e-5
-DATA_PATH = "bias_clean.csv"
 VERSION_FILE = "model_version.txt"
 
-import pandas as pd
-df = pd.read_csv("bias_clean.csv")
-print(df["bias"].unique())
-print(df.columns.tolist())
+# Load preprocessed splits produced by preprocess.py
+train_df = pd.read_csv("train.csv")
+test_df = pd.read_csv("test.csv")
 
-#changing bias labels 
-df["original_bias"] = df["bias"]
+X_train = train_df["page_text"].values
+y_train = train_df["bias"].values
+X_test = test_df["page_text"].values
+y_test = test_df["bias"].values
 
-# having 3 classes for training so clean
-df["bias"] = df["bias"].replace({
-    "leaning-left": "left",
-    "leaning-right": "right"
-})
-
-# dropping bad rows
-df = df.dropna(subset=["page_text", "bias"])
-
-print(df["bias"].value_counts())
-
-#page text
-texts = df["page_text"].values
-labels = df["bias"].values
-
-#label encoding
-le = LabelEncoder()
-labels = le.fit_transform(labels)
-
-print(dict(zip(le.classes_, le.transform(le.classes_))))
-
-#train test split
-X_train, X_test, y_train, y_test, idx_train, idx_test = train_test_split(
-  texts,
-  labels,
-  df.index,
-  test_size=0.2,
-  random_state=42,
-  stratify=labels
-)
+le = joblib.load("preprocessed_data/label_encoder.pkl")
 
 #initializing clearml
 task = Task.init(
