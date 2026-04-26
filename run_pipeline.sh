@@ -45,3 +45,20 @@ TRAIN_ARGS="--model ${MODEL}"
 ${PYTHON} train.py ${TRAIN_ARGS} 2>&1 | tee -a "${LOG_FILE}"
 log "Training complete."
 
+# Validation step
+log "Step 3: Validation (val.csv)"
+
+VALIDATE_ARGS="--model ${MODEL}"
+[[ "${LOCAL}" == "true" ]] && VALIDATE_ARGS+=" --local"
+
+${PYTHON} validate.py ${VALIDATE_ARGS} 2>&1 | tee -a "${LOG_FILE}"
+log "Validation complete."
+
+# Testing step
+log "Step 4: Testing (test.csv)"
+
+TEST_ARGS="--model ${MODEL}"
+[[ "${LOCAL}" == "true" ]] && TEST_ARGS+=" --local"
+
+${PYTHON} test.py ${TEST_ARGS} 2>&1 | tee -a "${LOG_FILE}"
+log "Testing complete."

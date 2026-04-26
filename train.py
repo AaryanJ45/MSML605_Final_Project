@@ -6,11 +6,12 @@ import joblib
 from datetime import datetime
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, classification_report
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from torch.optim import AdamW
 from transformers import get_linear_schedule_with_warmup
 from clearml import Task
+from dataset import TextDataset, MAX_LEN
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", type=str, choices=["bert", "distilbert"], required=True)
@@ -24,11 +25,10 @@ else:
 
 #all configurations
 THRESHOLD = 0.80
-MAX_LEN = 256
 BATCH = 16
 EPOCHS = 3
 LR = 2e-5
-VERSION_FILE = "model_version.txt"
+MODEL_SAVE_DIR = "saved_models"
 
 # Load preprocessed splits produced by preprocess.py
 train_df = pd.read_csv("train.csv")
@@ -54,29 +54,6 @@ model = AutoModelForSequenceClassification.from_pretrained(
     MODEL_NAME,
     num_labels=len(le.classes_)
 )
-class TextDataset(Dataset):
-    def __init__(self, texts, labels, tokenizer):
-        self.texts = texts
-        self.labels = labels
-        self.tokenizer = tokenizer
-
-    def __len__(self):
-        return len(self.texts)
-
-    def __getitem__(self, idx):
-        encoding = self.tokenizer(
-            self.texts[idx],
-            padding="max_length",
-            truncation=True,
-            max_length=MAX_LEN,
-            return_tensors="pt"
-        )
-        return {
-            "input_ids": encoding["input_ids"].squeeze(),
-            "attention_mask": encoding["attention_mask"].squeeze(),
-            "labels": torch.tensor(self.labels[idx], dtype=torch.long)
-        }
-
 train_dataset = TextDataset(X_train, y_train, tokenizer)
 test_dataset = TextDataset(X_test, y_test, tokenizer)
 
@@ -124,3 +101,9 @@ for epoch in range (EPOCHS):
 
         total_loss += loss.item()
     print(f"Epoch {epoch+1}/{EPOCHS} | Loss: {total_loss:.4f}")
+
+save_path = os.path.join(MODEL_SAVE_DIR, args.model)
+os.makedirs(save_path, exist_ok=True)
+model.save_pretrained(save_path)
+tokenizer.save_pretrained(save_path)
+print(f"Model saved to {save_path}")
