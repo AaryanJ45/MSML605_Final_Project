@@ -51,7 +51,8 @@ else
     # Preprocessing step
     log "Step 1: Preprocessing"
 
-    PREPROCESS_ARGS="--file_name ${FILE_NAME} --local ${LOCAL}"
+    PREPROCESS_ARGS="--file_name ${FILE_NAME}"
+    [[ "${LOCAL}" == "true" ]] && PREPROCESS_ARGS+=" --local"
     [[ -n "${BUCKET}" ]] && PREPROCESS_ARGS+=" --bucket ${BUCKET}"
 
     ${PYTHON} preprocess.py ${PREPROCESS_ARGS} 2>&1 | tee -a "${LOG_FILE}"

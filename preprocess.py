@@ -44,7 +44,7 @@ def save_preprocessed_data(df, local, bucket=None, file_name=None):
 
 def preprocess_data(args):
     # Loading the data
-    df = load_data(local=True, file_name="bias_clean.csv")
+    df = load_data(local=args.local, bucket=args.bucket, file_name=args.file_name)
 
     # Doing some basic cleaning
     df = df.dropna(subset=["page_text", "bias"])
@@ -99,7 +99,7 @@ def preprocess_data(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--local", type=bool, default=True)
+    parser.add_argument("--local", action="store_true", default=True)
     parser.add_argument("--bucket", type=str, default=None)
     parser.add_argument("--file_name", type=str, default="bias_clean.csv")
     args = parser.parse_args()
