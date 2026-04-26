@@ -6,7 +6,8 @@ LOCAL="${LOCAL:-true}"
 BUCKET="${BUCKET:-}"
 FILE_NAME="${FILE_NAME:-bias_clean.csv}"
 PYTHON="${PYTHON:-python3}"
-SKIP_TRAIN="${SKIP_TRAIN:-false}"
+SKIP_TRAIN="${SKIP_TRAIN:-false}"       # true = skip preprocess+train, pull model from S3
+PREPROCESS_ONLY="${PREPROCESS_ONLY:-false}" # true = preprocess + upload to S3, then stop
 LOG_DIR="logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_DIR}/pipeline_${TIMESTAMP}.log"
@@ -23,14 +24,41 @@ if [[ "${LOCAL}" == "false" && -z "${BUCKET}" ]]; then
     fail "BUCKET env var must be set when LOCAL=false"
 fi
 
-log "Starting UP"
-log "Model=${MODEL} | Local=${LOCAL} | SkipTrain=${SKIP_TRAIN} | File=${FILE_NAME}"
+log "====== MLOps Pipeline Start ======"
+log "Model=${MODEL} | Local=${LOCAL} | SkipTrain=${SKIP_TRAIN} | PreprocessOnly=${PREPROCESS_ONLY} | File=${FILE_NAME}"
 log "Full log: ${LOG_FILE}"
 
-# If we skip the training, it will pull the pre-trained model and preprocessed data from the S3
-if [[ "${SKIP_TRAIN}" == "true" ]]; then
-    log "SKIP_TRAIN=true — pulling pre-trained model and preprocessed data from S3."
+# ── Mode 1: PREPROCESS_ONLY ───────────────────────────────────────────────────
+# Run preprocess.py, upload splits to S3, then stop.
+# Used when training will happen in Colab.
+if [[ "${PREPROCESS_ONLY}" == "true" ]]; then
+    if [[ "${LOCAL}" == "true" ]]; then
+        fail "PREPROCESS_ONLY=true requires LOCAL=false and a BUCKET to upload splits to S3."
+    fi
 
+    log "Step 1: Preprocessing (preprocess-only mode)"
+
+    PREPROCESS_ARGS="--file_name ${FILE_NAME} --bucket ${BUCKET}"
+    ${PYTHON} preprocess.py ${PREPROCESS_ARGS} 2>&1 | tee -a "${LOG_FILE}"
+    log "Preprocessing complete."
+
+    log "Uploading preprocessed data to s3://${BUCKET}/preprocessed_data/ ..."
+    aws s3 sync preprocessed_data/ "s3://${BUCKET}/preprocessed_data/" 2>&1 | tee -a "${LOG_FILE}"
+
+    log "Uploading preprocessed CSVs to s3://${BUCKET}/ ..."
+    aws s3 cp train.csv "s3://${BUCKET}/train.csv" 2>&1 | tee -a "${LOG_FILE}"
+    aws s3 cp val.csv   "s3://${BUCKET}/val.csv"   2>&1 | tee -a "${LOG_FILE}"
+    aws s3 cp test.csv  "s3://${BUCKET}/test.csv"  2>&1 | tee -a "${LOG_FILE}"
+
+    log "Splits uploaded. Run train_colab.ipynb in Colab to train, then re-run with SKIP_TRAIN=true."
+    log "====== Preprocessing Complete ======"
+    exit 0
+fi
+
+# ── Mode 2: SKIP_TRAIN ────────────────────────────────────────────────────────
+# Pull pre-trained model + preprocessed splits from S3, then validate + test.
+# Used after Colab training is done.
+if [[ "${SKIP_TRAIN}" == "true" ]]; then
     if [[ "${LOCAL}" == "true" ]]; then
         fail "SKIP_TRAIN=true requires LOCAL=false and a BUCKET so the model can be pulled from S3."
     fi
@@ -39,16 +67,17 @@ if [[ "${SKIP_TRAIN}" == "true" ]]; then
     aws s3 sync "s3://${BUCKET}/preprocessed_data/" preprocessed_data/ 2>&1 | tee -a "${LOG_FILE}"
 
     log "Pulling preprocessed CSVs from s3://${BUCKET}/ ..."
-    aws s3 cp "s3://${BUCKET}/train.csv" train.csv 2>&1 | tee -a "${LOG_FILE}"
-    aws s3 cp "s3://${BUCKET}/val.csv"   val.csv   2>&1 | tee -a "${LOG_FILE}"
-    aws s3 cp "s3://${BUCKET}/test.csv"  test.csv  2>&1 | tee -a "${LOG_FILE}"
+    aws s3 cp "s3://${BUCKET}/val.csv"  val.csv  2>&1 | tee -a "${LOG_FILE}"
+    aws s3 cp "s3://${BUCKET}/test.csv" test.csv 2>&1 | tee -a "${LOG_FILE}"
 
     log "Pulling saved model from s3://${BUCKET}/saved_models/${MODEL}/ ..."
     aws s3 sync "s3://${BUCKET}/saved_models/${MODEL}/" "saved_models/${MODEL}/" 2>&1 | tee -a "${LOG_FILE}"
 
-    log "Pre-trained model and data ready."
+    log "Model and data ready."
+
+# ── Mode 3: Full pipeline (default) ───────────────────────────────────────────
+# Preprocess → train on EC2 → upload → validate → test.
 else
-    # Preprocessing step
     log "Step 1: Preprocessing"
 
     PREPROCESS_ARGS="--file_name ${FILE_NAME}"
@@ -58,7 +87,6 @@ else
     ${PYTHON} preprocess.py ${PREPROCESS_ARGS} 2>&1 | tee -a "${LOG_FILE}"
     log "Preprocessing complete."
 
-    # Training step
     log "Step 2: Training (model=${MODEL})"
 
     TRAIN_ARGS="--model ${MODEL}"
@@ -67,7 +95,6 @@ else
     ${PYTHON} train.py ${TRAIN_ARGS} 2>&1 | tee -a "${LOG_FILE}"
     log "Training complete."
 
-    # Uploading the model artifact to S3 after training
     if [[ "${LOCAL}" == "false" ]]; then
         log "Uploading saved model to s3://${BUCKET}/saved_models/${MODEL}/ ..."
         aws s3 sync "saved_models/${MODEL}/" "s3://${BUCKET}/saved_models/${MODEL}/" 2>&1 | tee -a "${LOG_FILE}"
@@ -84,7 +111,7 @@ else
     fi
 fi
 
-# Validation step
+# ── Validate + Test (all modes except PREPROCESS_ONLY) ────────────────────────
 log "Step 3: Validation (val.csv)"
 
 VALIDATE_ARGS="--model ${MODEL}"
@@ -93,7 +120,6 @@ VALIDATE_ARGS="--model ${MODEL}"
 ${PYTHON} validate.py ${VALIDATE_ARGS} 2>&1 | tee -a "${LOG_FILE}"
 log "Validation complete."
 
-# Testing step
 log "Step 4: Testing (test.csv)"
 
 TEST_ARGS="--model ${MODEL}"
@@ -102,4 +128,4 @@ TEST_ARGS="--model ${MODEL}"
 ${PYTHON} test.py ${TEST_ARGS} 2>&1 | tee -a "${LOG_FILE}"
 log "Testing complete."
 
-log "Completed successfully."
+log "====== Pipeline Complete ======"
