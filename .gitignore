@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+.env
+
+# ML artifacts (generated during runs)
+saved_models/
+preprocessed_data/*.pkl
+logs/
+train.csv
+val.csv
+test.csv
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
