@@ -20,17 +20,27 @@ BATCH = 16
 MODEL_SAVE_DIR = "saved_models"
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--model", type=str, choices=["bert", "distilbert"], required=True)
+parser.add_argument(
+    "--model",
+    type=str,
+    required=True,
+    help="HuggingFace model ID or shorthand: bert, distilbert",
+)
 parser.add_argument("--local", action="store_true")
 parser.add_argument(
     "--model-path",
     type=str,
     default=None,
-    help="Path to saved model directory. Defaults to saved_models/<model>.",
+    help="Path to saved model directory. Defaults to saved_models/<save_key>.",
 )
 args = parser.parse_args()
 
-model_path = args.model_path or os.path.join(MODEL_SAVE_DIR, args.model)
+_ALIASES: dict[str, str] = {
+    "bert":       "bert",
+    "distilbert": "distilbert",
+}
+_save_key = _ALIASES.get(args.model, args.model.replace("/", "__"))
+model_path = args.model_path or os.path.join(MODEL_SAVE_DIR, _save_key)
 if not os.path.isdir(model_path):
     raise FileNotFoundError(
         f"No saved model found at '{model_path}'. Run train.py first."
@@ -44,7 +54,7 @@ y_val = val_df["bias"].values
 
 task = Task.init(
     project_name="Bias Detection",
-    task_name=f"validate_{args.model}",
+    task_name=f"validate_{_save_key}",
 )
 
 tokenizer = AutoTokenizer.from_pretrained(model_path)

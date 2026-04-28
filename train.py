@@ -14,14 +14,25 @@ from clearml import Task
 from dataset import TextDataset, MAX_LEN
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--model", type=str, choices=["bert", "distilbert"], required=True)
+parser.add_argument(
+    "--model",
+    type=str,
+    required=True,
+    help="HuggingFace model ID (e.g. roberta-base) or shorthand: bert, distilbert",
+)
 parser.add_argument("--local", action="store_true")
 args = parser.parse_args()
 
-if args.model == "bert":
-    MODEL_NAME = "bert-base-uncased"
+# Maintain backward-compat shortcuts; otherwise treat the arg as a raw HF model ID.
+_ALIASES: dict[str, tuple[str, str]] = {
+    "bert":       ("bert-base-uncased",       "bert"),
+    "distilbert": ("distilbert-base-uncased",  "distilbert"),
+}
+if args.model in _ALIASES:
+    MODEL_NAME, _SAVE_KEY = _ALIASES[args.model]
 else:
-    MODEL_NAME = "distilbert-base-uncased"
+    MODEL_NAME = args.model
+    _SAVE_KEY  = args.model.replace("/", "__")
 
 #all configurations
 THRESHOLD = 0.80
@@ -44,7 +55,7 @@ le = joblib.load("preprocessed_data/label_encoder.pkl")
 #initializing clearml
 task = Task.init(
     project_name="Bias Detection",
-    task_name="bert_vs_distilbert"
+    task_name=f"train_{_SAVE_KEY}",
 )
 
 #tokenizing text
@@ -102,7 +113,7 @@ for epoch in range (EPOCHS):
         total_loss += loss.item()
     print(f"Epoch {epoch+1}/{EPOCHS} | Loss: {total_loss:.4f}")
 
-save_path = os.path.join(MODEL_SAVE_DIR, args.model)
+save_path = os.path.join(MODEL_SAVE_DIR, _SAVE_KEY)
 os.makedirs(save_path, exist_ok=True)
 model.save_pretrained(save_path)
 tokenizer.save_pretrained(save_path)
