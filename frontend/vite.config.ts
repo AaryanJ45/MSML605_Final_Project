@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => {
         "/predict": api,
         "/health":  api,
         "/jobs":    api,
+        "/compare": api,
       },
     },
   };

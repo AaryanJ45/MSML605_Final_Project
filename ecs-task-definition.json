@@ -1,0 +1,45 @@
+{
+  "_comment": "Register with: aws ecs register-task-definition --cli-input-json file://ecs-task-definition.json",
+  "_placeholders": {
+    "YOUR_ACCOUNT_ID": "12-digit AWS account ID",
+    "YOUR_REGION":     "e.g. us-east-1",
+    "YOUR_ECR_IMAGE":  "e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/bias-train:latest"
+  },
+
+  "family": "bias-train-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu":    "4096",
+  "memory": "16384",
+
+  "executionRoleArn": "arn:aws:iam::YOUR_ACCOUNT_ID:role/ecsTaskExecutionRole",
+  "taskRoleArn":      "arn:aws:iam::YOUR_ACCOUNT_ID:role/biasTrainTaskRole",
+
+  "containerDefinitions": [
+    {
+      "name":      "train",
+      "image":     "YOUR_ECR_IMAGE",
+      "essential": true,
+
+      "environment": [
+        { "name": "PYTHONUNBUFFERED", "value": "1" }
+      ],
+
+      "secrets": [
+        { "name": "CLEARML_API_ACCESS_KEY", "valueFrom": "arn:aws:secretsmanager:YOUR_REGION:YOUR_ACCOUNT_ID:secret:clearml/access_key" },
+        { "name": "CLEARML_API_SECRET_KEY", "valueFrom": "arn:aws:secretsmanager:YOUR_REGION:YOUR_ACCOUNT_ID:secret:clearml/secret_key" },
+        { "name": "CLEARML_API_HOST",       "valueFrom": "arn:aws:secretsmanager:YOUR_REGION:YOUR_ACCOUNT_ID:secret:clearml/host" }
+      ],
+
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group":         "/ecs/bias-train",
+          "awslogs-region":        "YOUR_REGION",
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group":  "true"
+        }
+      }
+    }
+  ]
+}

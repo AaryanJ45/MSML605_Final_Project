@@ -187,7 +187,6 @@ const STATUS_LABEL: Record<string, string> = {
 export default function CompareTab() {
   const [modelA, setModelA] = useState<ModelKey>("bert");
   const [modelB, setModelB] = useState<ModelKey>("distilbert");
-  const [local, setLocal] = useState(true);
   const [job, setJob] = useState<CompareJob | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -231,7 +230,7 @@ export default function CompareTab() {
       const res = await fetch("/compare/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model_a: modelA, model_b: modelB, local }),
+        body: JSON.stringify({ model_a: modelA, model_b: modelB, local: true }),
       });
 
       if (!res.ok) {
@@ -252,31 +251,13 @@ export default function CompareTab() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="space-y-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm">
-            ≡
-          </div>
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900">Model Comparison</h2>
-            <p className="text-sm text-slate-500">Evaluate two pre-trained models side-by-side on the held-out test set</p>
-          </div>
-        </div>
-
-        {/* How it works */}
-        <div className="bg-slate-50 border border-slate-200 rounded-xl px-5 py-4 text-sm text-slate-600 space-y-1">
-          <p className="font-semibold text-slate-700">How it works</p>
-          <p>
-            Select two fine-tuned models and click <span className="font-semibold">Compare</span>. The backend runs
-            {" "}<code className="bg-slate-200 px-1 rounded text-xs">test.py</code> on both models against the same
-            held-out test split (346 articles from <em>bias_clean.csv</em>) and returns side-by-side
-            accuracy, F1, precision, and recall — plus a per-class breakdown for Center, Left, and Right.
-          </p>
-          <p className="text-xs text-slate-400 pt-1">
-            Both models must already be trained (saved_models/bert and saved_models/distilbert must exist).
-            Our published results: BERT 91.5% · DistilBERT 91.3% accuracy.
-          </p>
-        </div>
+      <div>
+        <h2 className="text-2xl font-bold text-slate-900">Model Comparison</h2>
+        <p className="text-slate-500 mt-1 text-sm">
+          Runs <code className="bg-slate-100 px-1 rounded">test.py</code> on both models against the same 346-article
+          held-out split and returns side-by-side accuracy, F1, precision, and recall — plus a per-class breakdown.
+          Both models must already be trained.
+        </p>
       </div>
 
       {/* Config card */}
@@ -312,25 +293,6 @@ export default function CompareTab() {
               </div>
             );
           })}
-        </div>
-
-        {/* Data source toggle */}
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-slate-600">Data source:</span>
-          {(["local", "s3"] as const).map(src => (
-            <button
-              key={src}
-              onClick={() => setLocal(src === "local")}
-              disabled={isRunning}
-              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors disabled:opacity-40 ${
-                (src === "local") === local
-                  ? "bg-slate-900 text-white"
-                  : "bg-slate-100 text-slate-500 hover:bg-slate-200"
-              }`}
-            >
-              {src === "local" ? "Local" : "S3 Bucket"}
-            </button>
-          ))}
         </div>
 
         <button
@@ -453,15 +415,10 @@ export default function CompareTab() {
           </div>
 
           {/* Context note */}
-          <div className="bg-slate-50 border border-slate-200 rounded-xl px-5 py-4 text-sm text-slate-600">
-            <p className="font-semibold text-slate-700 mb-1">Interpretation</p>
-            <p>
-              Both BERT and DistilBERT are fine-tuned for 2 epochs on the 1,041-article training split of{" "}
-              <em>bias_clean.csv</em> (1,733 articles total). DistilBERT is ~40% smaller and runs inference
-              roughly 2× faster, but retains 97% of BERT's language understanding through knowledge
-              distillation — making it well-suited for production deployments with tighter compute budgets.
-            </p>
-          </div>
+          <p className="text-xs text-slate-400">
+            Both models are fine-tuned for 3 epochs on 1,041 training articles. DistilBERT is ~40% smaller and
+            ~2× faster at inference while retaining 97% of BERT's language understanding through knowledge distillation.
+          </p>
         </div>
       )}
     </div>

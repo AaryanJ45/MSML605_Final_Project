@@ -1,0 +1,21 @@
+FROM python:3.11-slim
+
+# awscli is needed by run_pipeline.sh for S3 sync/upload steps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        awscli \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy only what the training pipeline needs — API and frontend are not required
+COPY dataset.py preprocess.py train.py validate.py test.py run_pipeline.sh ./
+
+# PYTHONUNBUFFERED ensures log lines are flushed immediately to CloudWatch
+ENV PYTHONUNBUFFERED=1
+
+# run_pipeline.sh reads MODEL, BUCKET, LOCAL, SKIP_TRAIN, PREPROCESS_ONLY from env.
+# These are injected at runtime via ECS container overrides — see ecs-task-definition.json.
+CMD ["bash", "run_pipeline.sh"]
