@@ -9,6 +9,7 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 class RunRequest(BaseModel):
     model_id: str
     local: bool = True
+    mode: str = "full"  # "full" | "preprocess_only" | "skip_train"
 
     @field_validator("model_id")
     @classmethod
@@ -17,6 +18,14 @@ class RunRequest(BaseModel):
             raise ValueError("model_id must not be empty")
         return v.strip()
 
+    @field_validator("mode")
+    @classmethod
+    def mode_valid(cls, v: str) -> str:
+        allowed = {"full", "preprocess_only", "skip_train"}
+        if v not in allowed:
+            raise ValueError(f"mode must be one of {sorted(allowed)}")
+        return v
+
 
 @router.post("/run")
 async def run_pipeline(req: RunRequest) -> dict:
@@ -24,6 +33,7 @@ async def run_pipeline(req: RunRequest) -> dict:
         model_id=req.model_id,
         bucket=settings.bucket or None,
         local=req.local,
+        mode=req.mode,
     )
     return {"job_id": job_id, "status": "queued"}
 

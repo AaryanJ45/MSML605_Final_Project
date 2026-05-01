@@ -1,18 +1,19 @@
-import re
-import subprocess
 import sys
 import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-# In-memory job store. On EC2 this lives for the process lifetime — good enough for Option A.
+from api.services.utils import parse_metrics, run_subprocess
+
+# In-memory job store. Lives for the process lifetime — good enough for a single-server deployment.
 _lock = threading.Lock()
 _training_lock = threading.Lock()  # serialises pipeline runs so they don't fight for GPU/disk
 
 JOBS: dict[str, dict] = {}
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _sanitize(model_id: str) -> str:
     """Turn a HF model ID into a safe filesystem key: microsoft/deberta → microsoft__deberta."""
@@ -42,50 +43,20 @@ def _fail(job_id: str, reason: str) -> None:
     _log(job_id, f"[pipeline] ✗ FAILED: {reason}")
 
 
-def _run(cmd: list[str], job_id: str) -> int:
-    """Run a subprocess, streaming every output line into the job log."""
-    _log(job_id, f"[cmd] {' '.join(cmd)}")
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    assert proc.stdout is not None
-    for line in iter(proc.stdout.readline, ""):
-        stripped = line.rstrip()
-        if stripped:
-            _log(job_id, stripped)
-    proc.stdout.close()
-    proc.wait()
-    return proc.returncode
-
-
-def _parse_metrics(logs: list[str]) -> dict[str, float]:
-    """Scrape test-phase metric lines from captured logs."""
-    metrics: dict[str, float] = {}
-    patterns = {
-        "accuracy":  r"Accuracy\s*:\s*([0-9.]+)",
-        "precision": r"Precision\s*:\s*([0-9.]+)",
-        "recall":    r"Recall\s*:\s*([0-9.]+)",
-        "f1":        r"F1 Score\s*:\s*([0-9.]+)",
-    }
-    for line in logs:
-        for key, pattern in patterns.items():
-            if key not in metrics:
-                m = re.search(pattern, line, re.IGNORECASE)
-                if m:
-                    metrics[key] = float(m.group(1))
-    return metrics
+def _exec(job_id: str, cmd: list[str]) -> tuple[int, list[str]]:
+    """Run a subprocess, stream every output line into the job log, return (rc, lines)."""
+    return run_subprocess(cmd, lambda line: _log(job_id, line))
 
 
 # ── Worker ────────────────────────────────────────────────────────────────────
+
 
 def _pipeline_worker(
     job_id: str,
     model_id: str,
     bucket: Optional[str],
     local: bool,
+    mode: str,
 ) -> None:
     python = sys.executable
     save_key = _sanitize(model_id)
@@ -94,63 +65,109 @@ def _pipeline_worker(
     local_flags = ["--local"] if local else []
     bucket_flags = ["--bucket", bucket] if bucket else []
 
-    # Serialise: only one training job runs at a time on this server.
     with _training_lock:
         try:
-            # ── Step 1: Preprocess ────────────────────────────────────────
+            if mode == "preprocess_only":
+                _set_phase(job_id, "preprocessing")
+                rc, _ = _exec(
+                    job_id,
+                    [python, "preprocess.py", "--file_name", "bias_clean.csv"]
+                    + local_flags
+                    + bucket_flags,
+                )
+                if rc != 0:
+                    _fail(job_id, "Preprocessing failed — see logs above.")
+                    return
+                with _lock:
+                    JOBS[job_id].update(
+                        {
+                            "status": "completed",
+                            "finished_at": datetime.now(timezone.utc).isoformat(),
+                            "metrics": None,
+                            "save_key": save_key,
+                        }
+                    )
+                _log(job_id, "[pipeline] ✓ COMPLETED — preprocessed data uploaded.")
+                return
+
+            if mode == "skip_train":
+                _set_phase(job_id, "validating")
+                rc, _ = _exec(
+                    job_id,
+                    [python, "validate.py", "--model", model_id, "--model-path", model_save_path]
+                    + local_flags,
+                )
+                if rc != 0:
+                    _fail(job_id, "Validation failed — see logs above.")
+                    return
+
+                _set_phase(job_id, "testing")
+                rc, test_lines = _exec(
+                    job_id,
+                    [python, "test.py", "--model", model_id, "--model-path", model_save_path]
+                    + local_flags,
+                )
+                if rc != 0:
+                    _fail(job_id, "Testing failed — see logs above.")
+                    return
+
+                with _lock:
+                    JOBS[job_id].update(
+                        {
+                            "status": "completed",
+                            "finished_at": datetime.now(timezone.utc).isoformat(),
+                            "metrics": parse_metrics(test_lines),
+                            "save_key": save_key,
+                        }
+                    )
+                _log(job_id, "[pipeline] ✓ COMPLETED — evaluate-only run finished.")
+                return
+
+            # ── Full pipeline ─────────────────────────────────────────────────
+
             _set_phase(job_id, "preprocessing")
-            rc = _run(
+            rc, _ = _exec(
+                job_id,
                 [python, "preprocess.py", "--file_name", "bias_clean.csv"]
                 + local_flags
                 + bucket_flags,
-                job_id,
             )
             if rc != 0:
                 _fail(job_id, "Preprocessing failed — see logs above.")
                 return
 
-            # ── Step 2: Train ─────────────────────────────────────────────
             _set_phase(job_id, "training")
-            rc = _run(
-                [python, "train.py", "--model", model_id] + local_flags,
-                job_id,
-            )
+            rc, _ = _exec(job_id, [python, "train.py", "--model", model_id] + local_flags)
             if rc != 0:
                 _fail(job_id, "Training failed — see logs above.")
                 return
 
-            # ── Step 3: Validate ──────────────────────────────────────────
             _set_phase(job_id, "validating")
-            rc = _run(
+            rc, _ = _exec(
+                job_id,
                 [python, "validate.py", "--model", model_id, "--model-path", model_save_path]
                 + local_flags,
-                job_id,
             )
             if rc != 0:
                 _fail(job_id, "Validation failed — see logs above.")
                 return
 
-            # ── Step 4: Test ──────────────────────────────────────────────
             _set_phase(job_id, "testing")
-            rc = _run(
+            rc, test_lines = _exec(
+                job_id,
                 [python, "test.py", "--model", model_id, "--model-path", model_save_path]
                 + local_flags,
-                job_id,
             )
             if rc != 0:
                 _fail(job_id, "Testing failed — see logs above.")
                 return
 
-            # ── Done ──────────────────────────────────────────────────────
-            with _lock:
-                logs_snapshot = list(JOBS[job_id]["logs"])
-            metrics = _parse_metrics(logs_snapshot)
             with _lock:
                 JOBS[job_id].update(
                     {
                         "status": "completed",
                         "finished_at": datetime.now(timezone.utc).isoformat(),
-                        "metrics": metrics,
+                        "metrics": parse_metrics(test_lines),
                         "save_key": save_key,
                     }
                 )
@@ -162,25 +179,27 @@ def _pipeline_worker(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def start_pipeline(model_id: str, bucket: Optional[str], local: bool) -> str:
+
+def start_pipeline(model_id: str, bucket: Optional[str], local: bool, mode: str = "full") -> str:
     job_id = str(uuid.uuid4())[:8]
     save_key = _sanitize(model_id)
     with _lock:
         JOBS[job_id] = {
-            "job_id": job_id,
-            "model_id": model_id,
-            "save_key": save_key,
-            "status": "queued",
-            "started_at": datetime.now(timezone.utc).isoformat(),
+            "job_id":      job_id,
+            "model_id":    model_id,
+            "save_key":    save_key,
+            "mode":        mode,
+            "status":      "queued",
+            "started_at":  datetime.now(timezone.utc).isoformat(),
             "finished_at": None,
-            "logs": [f"[pipeline] Job {job_id} queued for model: {model_id}"],
-            "metrics": None,
-            "error": None,
+            "logs":        [f"[pipeline] Job {job_id} queued — model: {model_id}, mode: {mode}"],
+            "metrics":     None,
+            "error":       None,
         }
 
     thread = threading.Thread(
         target=_pipeline_worker,
-        args=(job_id, model_id, bucket, local),
+        args=(job_id, model_id, bucket, local, mode),
         daemon=True,
         name=f"pipeline-{job_id}",
     )

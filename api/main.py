@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routers.predict import router as predict_router
 from api.routers.jobs import router as jobs_router
+from api.routers.compare import router as compare_router
 from api.core.config import settings
 from api.services import inference as svc
 
@@ -46,6 +47,7 @@ app.add_middleware(
 
 app.include_router(predict_router)
 app.include_router(jobs_router)
+app.include_router(compare_router)
 
 
 @app.get("/health")

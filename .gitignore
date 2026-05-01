@@ -40,3 +40,7 @@ frontend/.env
 
 # Jupyter
 .ipynb_checkpoints/
+/.pip_packages
+
+# Generated files
+*.pptx
